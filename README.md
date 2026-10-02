@@ -46,6 +46,48 @@ uv run python eval/run_retrieval_metrics.py
 
 This writes `eval/results.json` and prints the table.
 
+## Evals
+
+### Known-item search (main eval)
+
+A known-item query is what someone types when they remember a movie but not its title. `eval/known_item/` holds 948 generated queries for 237 movies sampled across description lengths (the target was 300 movies; generation stopped at 237 when the Groq free-tier limit ran out):
+
+- An LLM (gpt-oss-safeguard-20b on Groq) wrote three queries per movie: keyword, descriptive, and vague. Code added a misspelled copy of each keyword query.
+- Code dropped 114 queries that contain a word from the title, since those are too easy. 834 queries over 233 movies remain.
+- Each query has exactly one correct movie. Split by movie id: dev 496 queries, test 452 (before title-leak removal).
+- These queries are generated, not real user searches. Bingo has no query logs yet. Descriptive queries were written from the plot text, so they favor word matching, which helps BM25.
+
+Results on 2026-10-02 (`uv run python eval/known_item/run_known_item.py`):
+
+| Configuration | dev hit@10 | test hit@10 | test hit@1 | test MRR@10 | p95 latency |
+|---|---|---|---|---|---|
+| BM25 | 0.841 | 0.858 | 0.626 | 0.701 | 39 ms |
+| Semantic | 0.573 | 0.626 | 0.371 | 0.448 | 371 ms |
+| RRF | 0.804 | 0.837 | 0.560 | 0.650 | 775 ms |
+| RRF + cross-encoder | 0.888 | 0.916 | 0.697 | 0.772 | 928 ms |
+
+hit@10 by query style:
+
+| Configuration | keyword | misspelled keyword | descriptive | vague |
+|---|---|---|---|---|
+| BM25 | 0.924 | 0.743 | 0.955 | 0.783 |
+| Semantic | 0.667 | 0.464 | 0.714 | 0.557 |
+| RRF | 0.852 | 0.689 | 0.960 | 0.788 |
+| RRF + cross-encoder | 0.957 | 0.811 | 0.975 | 0.867 |
+
+What this says in plain words:
+
+- The cross-encoder rerank is the best mode: about 9 in 10 queries find the movie in the top 10.
+- Plain semantic search is the weakest. Fusing it with BM25 (RRF) is slightly worse than BM25 alone on this set.
+- Misspellings and vague memories are the hard cases. In BM25 misses we also saw hyphenated words and non-English titles.
+- Latency was measured on a shared, busy machine, so treat it as rough.
+
+CI rebuilds the BM25 index and fails if BM25 hit@10 or MRR@10 drops below `eval/known_item/baseline.json`. The full four-mode run is a manual workflow job because it needs the embedding model and takes a long time on CPU.
+
+### Monitoring path
+
+Log each search query with the mode, the top 10 ids, and whether the user clicked a result. Each week, sample about 50 queries with no click in the top 10, label the intended movie by hand when it can be found, and add them to the query set as real cases.
+
 ---
 
 ## Installation
