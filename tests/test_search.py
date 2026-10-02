@@ -45,6 +45,13 @@ def test_tokenize_lowercases_drops_stopwords_and_stems():
     assert tokenize_text("The Bears are RUNNING!") == ["bear", "run"]
 
 
+def test_tokenize_splits_hyphenated_words():
+    # Found in known-item error analysis: deleting hyphens glued words into unmatchable tokens.
+    assert tokenize_text("post-war Berlin") == tokenize_text("post war Berlin")
+    assert tokenize_text("car-accident") == ["car", "accid"]
+    assert tokenize_text("don't") == ["dont"]
+
+
 def test_tokenize_empty():
     assert tokenize_text("") == []
 

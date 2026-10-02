@@ -219,9 +219,15 @@ def search_command(query: str, limit: int = DEFAULT_SEARCH_LIMIT) -> list[dict]:
     return results
 
 
+_SPLIT_CHARS = str.maketrans({c: " " for c in "-/\u2010\u2011\u2012\u2013\u2014"})
+_DROP_PUNCT = str.maketrans("", "", string.punctuation)
+
+
 def preprocess_text(text: str) -> str: 
     text = text.lower()
-    text = text.translate(str.maketrans("", "", string.punctuation))
+    # Word joiners split words ("post-war" -> "post war"); other punctuation is dropped
+    # ("don't" -> "dont"). Deleting hyphens used to glue words into tokens no query matches.
+    text = text.translate(_SPLIT_CHARS).translate(_DROP_PUNCT)
     return text
 
 

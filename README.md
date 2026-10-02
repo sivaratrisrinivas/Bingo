@@ -98,7 +98,7 @@ git clone https://github.com/sivaratrisrinivas/Bingo
 cd Bingo
 
 # Install dependencies (uv recommended)
-uv sync
+uv sync --frozen
 
 # Or using pip
 pip install -e .
