@@ -3,6 +3,7 @@ import math
 import string
 import pickle
 from collections import defaultdict, Counter
+from functools import lru_cache
 
 from nltk.stem import PorterStemmer
 
@@ -15,6 +16,7 @@ from .search_utils import (
     CACHE_DIR,
     load_movies,
     load_stopwords,
+    load_stopword_set,
     format_search_result,
 )
 
@@ -28,6 +30,7 @@ class InvertedIndex:
         self.docmap_path = os.path.join(CACHE_DIR, "docmap.pkl")
         self.term_frequencies_path = os.path.join(CACHE_DIR, "term_frequencies.pkl")
         self.doc_lengths_path = os.path.join(CACHE_DIR, "doc_lengths.pkl")
+        self._avg_doc_length: float | None = None
 
     def build(self) -> None: 
         movies = load_movies()
@@ -57,6 +60,7 @@ class InvertedIndex:
             self.term_frequencies = pickle.load(f)
         with open(self.doc_lengths_path, "rb") as f:
             self.doc_lengths = pickle.load(f)
+        self._avg_doc_length = None
 
     
     def __add_document(self, doc_id: int, text: str) -> None:
@@ -69,10 +73,13 @@ class InvertedIndex:
     def __get_avg_doc_length(self) -> float:
         if not self.doc_lengths or len(self.doc_lengths) == 0:
             return 0.0
+        if self._avg_doc_length is not None:
+            return self._avg_doc_length
         total_length = 0.0
         for length in self.doc_lengths.values():
             total_length += length
-        return total_length / len(self.doc_lengths)
+        self._avg_doc_length = total_length / len(self.doc_lengths)
+        return self._avg_doc_length
     
     def get_documents(self, term: str) -> list[int]:
         doc_ids = self.index.get(term, set())
@@ -124,17 +131,49 @@ class InvertedIndex:
         return bm25_tf * bm25_idf
 
     def bm25_search(self, query: str, limit: int) -> list[dict]:
+        """Score only documents that contain a query term.
+
+        Same ranking as scoring every document: documents with no query term
+        score 0 and keep their corpus order after the scored ones.
+        """
+        if not isinstance(query, str):
+            raise TypeError("query must be a string")
+        if limit < 0:
+            raise ValueError("limit must be >= 0")
         query_tokens = tokenize_text(query)
+        doc_count = len(self.docmap)
+        avg_len = self.__get_avg_doc_length()
+        k1, b = BM25_K1, BM25_B
+
+        idf = {}
+        for token in set(query_tokens):
+            n = len(self.index.get(token, ()))
+            idf[token] = math.log((doc_count - n + 0.5) / (n + 0.5) + 1.0)
+
+        candidates = set()
+        for token in query_tokens:
+            candidates.update(self.index.get(token, ()))
 
         scores = {}
         for doc_id in self.docmap:
+            if doc_id not in candidates:
+                continue
+            tfs = self.term_frequencies[doc_id]
+            norm = 1 - b + b * (self.doc_lengths[doc_id] / avg_len) if avg_len > 0 else 1.0
             score = 0.0
             for token in query_tokens:
-                score += self.bm25(doc_id, token)
+                tf = tfs[token]
+                score += ((tf * (k1 + 1)) / (tf + k1 * norm)) * idf[token]
             scores[doc_id] = score
-        
+
         sorted_docs = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        
+        if len(sorted_docs) < limit:
+            for doc_id in self.docmap:
+                if doc_id not in scores:
+                    sorted_docs.append((doc_id, 0.0))
+                    if len(sorted_docs) >= limit:
+                        break
+
         results = []
         for doc_id, score in sorted_docs[:limit]:
             doc = self.docmap[doc_id]
@@ -201,16 +240,16 @@ def tokenize_text(text: str) -> list[str]:
     for token in tokens: 
         if token: 
             valid_tokens.append(token)
-    stopwords = load_stopwords()
-    filtered_words = []
-    for word in valid_tokens:
-        if word not in stopwords: 
-            filtered_words.append(word)
-    stemmer = PorterStemmer()
-    stemmed_words = []
-    for word in filtered_words:
-        stemmed_words.append(stemmer.stem(word))
-    return stemmed_words
+    stopwords = load_stopword_set()
+    return [_stem(word) for word in valid_tokens if word not in stopwords]
+
+
+_STEMMER = PorterStemmer()
+
+
+@lru_cache(maxsize=200_000)
+def _stem(word: str) -> str:
+    return _STEMMER.stem(word)
 
 def tf_command(doc_id: int, term: str) -> int:
     idx = InvertedIndex()

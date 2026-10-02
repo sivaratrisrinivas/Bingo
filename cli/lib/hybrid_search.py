@@ -28,7 +28,8 @@ class HybridSearch:
             self.idx.save()
 
     def _bm25_search(self, query: str, limit: int = DEFAULT_SEARCH_LIMIT) -> list[dict]:
-        self.idx.load()
+        if not self.idx.docmap:
+            self.idx.load()
         return self.idx.bm25_search(query, limit)
 
     def weighted_search(self, query: str, alpha: float, limit: int = 5) -> list[dict]:
