@@ -90,6 +90,20 @@ Log each search query with the mode, the top 10 ids, and whether the user clicke
 
 ---
 
+## Side-by-side demo
+
+`web/` is a small local web app that runs one query through BM25, semantic, hybrid (RRF) and RRF + cross-encoder at once. It shows the four rankings as columns, highlights movies that more than one method returned, and puts the known-item eval table underneath, so you can see why a method wins or loses on a query instead of trusting one number.
+
+```bash
+uv run python web/server.py                # all four modes; builds chunk embeddings on first run
+uv run python web/server.py --modes bm25   # keyword only, ready in about 2 s
+# open http://127.0.0.1:8000
+```
+
+![Side-by-side demo](docs/demo.png)
+
+It uses only the standard library (wsgiref), so it adds no dependencies. Each column is timed separately, and a mode that fails returns an error in its own column without blanking the others. It isn't hosted: the corpus is Boot.dev course data that this repo downloads rather than redistributes, and the semantic modes need the embedding and cross-encoder models in memory.
+
 ## Installation
 
 ```bash
@@ -170,7 +184,7 @@ python cli/keyword_search_cli.py bm25search "romantic comedy" --limit 10
 # Semantic search
 python cli/semantic_search_cli.py search "space adventure" --limit 5
 
-# Hybrid search (best results)
+# Hybrid search (fuses BM25 and semantic; see Evals for when it helps)
 python cli/hybrid_search_cli.py rrf-search "superhero action movie" --limit 10
 ```
 
