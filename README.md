@@ -23,16 +23,18 @@ Together, these methods can be combined for even better results.
 
 ## Results
 
-Retrieval quality on `data/golden_dataset.json` (10 queries, 5000 movies, k=5). Measured 2026-08-24 on an Intel Xeon (4 CPUs, 15.64 GB RAM, Python 3.13.15). Embedding model: `all-MiniLM-L6-v2`. Reranker: `cross-encoder/ms-marco-TinyBERT-L2-v2`.
+Retrieval quality on `data/golden_dataset.json` (10 queries, 5000 movies, k=5). Re-measured 2026-10-02 on an Intel Xeon (8 CPUs, 15.64 GB RAM, Python 3.13.5) after the BM25 rewrite. Embedding model: `all-MiniLM-L6-v2`. Reranker: `cross-encoder/ms-marco-TinyBERT-L2-v2`.
 
 | Configuration | Precision@5 | Recall@5 | F1 | p95 query latency (ms) |
 |---|---|---|---|---|
-| BM25 | 0.3800 | 0.5157 | 0.3607 | 3419.2 |
-| Semantic | 0.3200 | 0.4606 | 0.3088 | 335.1 |
-| RRF | 0.3800 | 0.5049 | 0.3599 | 3804.8 |
-| RRF + cross-encoder | 0.3600 | 0.4824 | 0.3357 | 4038.2 |
+| BM25 | 0.4200 | 0.5407 | 0.3915 | 4.9 |
+| Semantic | 0.3200 | 0.4606 | 0.3088 | 1818.2 |
+| RRF | 0.4200 | 0.5299 | 0.3906 | 1216.7 |
+| RRF + cross-encoder | 0.3600 | 0.4824 | 0.3357 | 1775.2 |
 
-Index build time: 353.36s (BM25 16.31s, chunk embeddings 337.05s, cold rebuild). The eval always rebuilds the HybridSearch index it scores, so a cache hit cannot rewrite this number to ~0.
+Changes from the 2026-08-24 run (BM25 0.3800 / 0.5157 / 0.3607, p95 3419.2 ms): BM25 now scores from precomputed term statistics instead of re-reading every document per query, so p95 fell from about 3.4 s to 5 ms. The quality gain comes from a bug fix: the old code stemmed query terms twice inside `bm25()`, which changed the "zombie apocalypse" results. In an old-versus-new check on 15 queries, the other 14 returned identical rankings, and `tests/` checks the fast scorer against a brute-force BM25. Semantic and reranker latency is higher than in August because this run shared the machine with other jobs (load average about 19), so treat those latency numbers as noisy. Index build this run: 2022.3 s (BM25 5.0 s, chunk embeddings 2017.3 s on the loaded machine).
+
+With 10 queries, one query moves Precision@5 by 0.02 or more, so the golden table is a sanity check. The larger known-item eval below is the main quality measure.
 
 The golden set lists `Død snø` as relevant for the zombie query. That title is not in `movies.json`, so no method can retrieve it.
 
