@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bingo: one query, every retriever</title>
+<style>
+  :root { --bg:#fbfaf7; --fg:#1d1d1b; --muted:#6b6b66; --line:#e4e1d8; --accent:#b4541a; --hit:#fdf0e6; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--fg); }
+  header, main { max-width:1280px; margin:0 auto; padding:20px 24px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .sub { color:var(--muted); margin:0; }
+  form { display:flex; gap:8px; margin:18px 0 8px; }
+  input[type=search] { flex:1; padding:10px 12px; font-size:16px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+  button { padding:10px 16px; font-size:15px; border:0; border-radius:8px; background:var(--fg); color:#fff; cursor:pointer; }
+  .examples { color:var(--muted); font-size:13px; }
+  .examples a { color:var(--accent); cursor:pointer; margin-right:10px; text-decoration:none; }
+  .grid { display:grid; grid-template-columns:repeat(var(--cols,4), minmax(0,1fr)); gap:14px; margin-top:14px; }
+  .col { background:#fff; border:1px solid var(--line); border-radius:10px; padding:12px; min-height:120px; }
+  .col h2 { font-size:14px; margin:0 0 2px; display:flex; justify-content:space-between; }
+  .col h2 span { color:var(--muted); font-weight:400; }
+  .score-line { font-size:12px; color:var(--muted); margin-bottom:8px; }
+  ol { margin:0; padding:0; list-style:none; }
+  li { padding:6px 6px; border-radius:6px; border-top:1px solid var(--line); }
+  li:first-child { border-top:0; }
+  li.shared { background:var(--hit); }
+  li.focus { outline:2px solid var(--accent); }
+  .t { font-weight:600; font-size:14px; }
+  .r { color:var(--muted); font-variant-numeric:tabular-nums; margin-right:4px; }
+  .s { color:var(--muted); font-size:12px; }
+  .err { color:#a12; font-size:13px; }
+  table { border-collapse:collapse; width:100%; margin-top:8px; font-size:13px; background:#fff; }
+  th, td { border:1px solid var(--line); padding:6px 8px; text-align:right; font-variant-numeric:tabular-nums; }
+  th:first-child, td:first-child { text-align:left; }
+  td.best { font-weight:700; }
+  section.evals { margin-top:28px; }
+  section.evals h2 { font-size:16px; margin:0; }
+  .note { color:var(--muted); font-size:13px; margin:6px 0 0; }
+  @media (max-width:900px) { .grid { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Bingo: one query, every retriever</h1>
+  <p class="sub">Search 5,000 movie descriptions with keyword, semantic, hybrid and reranked retrieval side by side. Highlighted rows are movies that more than one method agrees on; hover a row to find it in the other columns.</p>
+  <form id="f">
+    <input id="q" type="search" placeholder="e.g. a heist crew hijacks a train in the old west" maxlength="200" autofocus>
+    <button>Search</button>
+  </form>
+  <div class="examples">Try:
+    <a data-q="zombie apocalypse survivors in a mall">zombie apocalypse</a>
+    <a data-q="dinosaurs escape from a theme park">dinosaur park</a>
+    <a data-q="a lonely robot cleans up an abandoned earth">lonely robot</a>
+    <a data-q="detctive hunts serial killer">typo: detctive</a>
+  </div>
+</header>
+<main>
+  <div id="grid" class="grid"></div>
+  <section class="evals">
+    <h2>How each method does on the known-item eval</h2>
+    <div id="evals"></div>
+    <p class="note" id="evalnote"></p>
+  </section>
+</main>
+<script>
+const $ = (s) => document.querySelector(s);
+let config = { modes: [], evals: {} };
+
+function el(tag, attrs = {}, text) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+
+function pct(x) { return x == null ? "n/a" : (x * 100).toFixed(1) + "%"; }
+
+function renderEvals() {
+  const ev = config.evals;
+  if (!ev || !ev.modes) { $("#evals").textContent = "No eval results found."; return; }
+  const cols = ["hit@1", "hit@5", "hit@10", "mrr@10"];
+  const names = Object.keys(ev.modes);
+  const best = {};
+  for (const c of cols) best[c] = Math.max(...names.map((n) => ev.modes[n].overall[c]));
+  const table = el("table");
+  const head = el("tr");
+  ["Method", ...cols, "Typo queries hit@10", "p50 ms", "p95 ms"].forEach((h) => head.appendChild(el("th", {}, h)));
+  table.appendChild(head);
+  for (const n of names) {
+    const m = ev.modes[n];
+    const tr = el("tr");
+    tr.appendChild(el("td", {}, m.label));
+    for (const c of cols) tr.appendChild(el("td", m.overall[c] === best[c] ? { class: "best" } : {}, pct(m.overall[c])));
+    tr.appendChild(el("td", {}, pct(m.by_style.keyword_typo && m.by_style.keyword_typo["hit@10"])));
+    tr.appendChild(el("td", {}, m.p50_ms == null ? "n/a" : m.p50_ms.toFixed(0)));
+    tr.appendChild(el("td", {}, m.p95_ms == null ? "n/a" : m.p95_ms.toFixed(0)));
+    table.appendChild(tr);
+  }
+  $("#evals").replaceChildren(table);
+  $("#evalnote").textContent =
+    `${ev.n_queries} generated queries, each aimed at one of ${ev.n_movies} movies (title-leaking queries removed). ` +
+    "Hit@k is how often the target movie appears in the top k. Plain hybrid fusion scores below BM25 alone here; " +
+    "reranking the fused list with a cross-encoder is the only method that beats BM25, and it is the slowest.";
+}
+
+function renderResults(data) {
+  const grid = $("#grid");
+  grid.style.setProperty("--cols", Object.keys(data.results).length);
+  const counts = {};
+  for (const r of Object.values(data.results)) for (const it of r.items) counts[it.id] = (counts[it.id] || 0) + 1;
+  const cols = [];
+  for (const [mode, r] of Object.entries(data.results)) {
+    const label = (config.modes.find((m) => m.id === mode) || { label: mode }).label;
+    const col = el("div", { class: "col" });
+    const h = el("h2", {}, label);
+    h.appendChild(el("span", {}, r.ms == null ? "" : `${r.ms.toFixed(0)} ms`));
+    col.appendChild(h);
+    const ev = config.evals.modes && config.evals.modes[mode];
+    col.appendChild(el("div", { class: "score-line" }, ev ? `eval hit@10 ${pct(ev.overall["hit@10"])}` : ""));
+    if (r.error) col.appendChild(el("div", { class: "err" }, r.error));
+    const ol = el("ol");
+    for (const it of r.items) {
+      const li = el("li", { "data-id": String(it.id), class: counts[it.id] > 1 ? "shared" : "" });
+      const t = el("div", { class: "t" });
+      t.appendChild(el("span", { class: "r" }, `${it.rank}.`));
+      t.appendChild(document.createTextNode(it.title));
+      li.appendChild(t);
+      li.appendChild(el("div", { class: "s" }, it.snippet));
+      li.addEventListener("mouseenter", () => document.querySelectorAll(`li[data-id="${it.id}"]`).forEach((n) => n.classList.add("focus")));
+      li.addEventListener("mouseleave", () => document.querySelectorAll("li.focus").forEach((n) => n.classList.remove("focus")));
+      ol.appendChild(li);
+    }
+    col.appendChild(ol);
+    cols.push(col);
+  }
+  grid.replaceChildren(...cols);
+}
+
+async function search(q) {
+  if (!q.trim()) return;
+  $("#q").value = q;
+  history.replaceState(null, "", "?q=" + encodeURIComponent(q));
+  $("#grid").replaceChildren(el("div", { class: "s" }, "Searching…"));
+  const res = await fetch("/api/search?k=10&q=" + encodeURIComponent(q));
+  const data = await res.json();
+  if (!res.ok) { $("#grid").replaceChildren(el("div", { class: "err" }, data.error || "Search failed")); return; }
+  renderResults(data);
+}
+
+$("#f").addEventListener("submit", (e) => { e.preventDefault(); search($("#q").value); });
+document.querySelectorAll(".examples a").forEach((a) => a.addEventListener("click", () => search(a.dataset.q)));
+
+fetch("/api/config").then((r) => r.json()).then((c) => {
+  config = c;
+  renderEvals();
+  const q = new URLSearchParams(location.search).get("q");
+  if (q) search(q);
+});
+</script>
+</body>
+</html>
