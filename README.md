@@ -23,16 +23,18 @@ Together, these methods can be combined for even better results.
 
 ## Results
 
-Retrieval quality on `data/golden_dataset.json` (10 queries, 5000 movies, k=5). Measured 2026-08-24 on an Intel Xeon (4 CPUs, 15.64 GB RAM, Python 3.13.15). Embedding model: `all-MiniLM-L6-v2`. Reranker: `cross-encoder/ms-marco-TinyBERT-L2-v2`.
+Retrieval quality on `data/golden_dataset.json` (10 queries, 5000 movies, k=5). Re-measured 2026-10-02 on an Intel Xeon (8 CPUs, 15.64 GB RAM, Python 3.13.5) after the BM25 rewrite. Embedding model: `all-MiniLM-L6-v2`. Reranker: `cross-encoder/ms-marco-TinyBERT-L2-v2`.
 
 | Configuration | Precision@5 | Recall@5 | F1 | p95 query latency (ms) |
 |---|---|---|---|---|
-| BM25 | 0.3800 | 0.5157 | 0.3607 | 3419.2 |
-| Semantic | 0.3200 | 0.4606 | 0.3088 | 335.1 |
-| RRF | 0.3800 | 0.5049 | 0.3599 | 3804.8 |
-| RRF + cross-encoder | 0.3600 | 0.4824 | 0.3357 | 4038.2 |
+| BM25 | 0.4200 | 0.5407 | 0.3915 | 4.9 |
+| Semantic | 0.3200 | 0.4606 | 0.3088 | 1818.2 |
+| RRF | 0.4200 | 0.5299 | 0.3906 | 1216.7 |
+| RRF + cross-encoder | 0.3600 | 0.4824 | 0.3357 | 1775.2 |
 
-Index build time: 353.36s (BM25 16.31s, chunk embeddings 337.05s, cold rebuild). The eval always rebuilds the HybridSearch index it scores, so a cache hit cannot rewrite this number to ~0.
+Changes from the 2026-08-24 run (BM25 0.3800 / 0.5157 / 0.3607, p95 3419.2 ms): BM25 now scores from precomputed term statistics instead of re-reading every document per query, so p95 fell from about 3.4 s to 5 ms. The quality gain comes from a bug fix: the old code stemmed query terms twice inside `bm25()`, which changed the "zombie apocalypse" results. In an old-versus-new check on 15 queries, the other 14 returned identical rankings, and `tests/` checks the fast scorer against a brute-force BM25. Semantic and reranker latency is higher than in August because this run shared the machine with other jobs (load average about 19), so treat those latency numbers as noisy. Index build this run: 2022.3 s (BM25 5.0 s, chunk embeddings 2017.3 s on the loaded machine).
+
+The 2026-10-03 hyphen tokenizer fix was not re-measured on this table. None of the 10 golden queries contains a hyphen, and a rerun after the fix gave identical per-query precision and recall for the configuration `eval/run_retrieval_metrics.py` stores. With 10 queries, one query moves Precision@5 by 0.02 or more, so the golden table is a sanity check. The larger known-item eval below is the main quality measure.
 
 The golden set lists `Død snø` as relevant for the zombie query. That title is not in `movies.json`, so no method can retrieve it.
 
@@ -44,6 +46,48 @@ uv run python eval/run_retrieval_metrics.py
 
 This writes `eval/results.json` and prints the table.
 
+## Evals
+
+### Known-item search (main eval)
+
+A known-item query is what someone types when they remember a movie but not its title. `eval/known_item/` holds 948 generated queries for 237 movies sampled across description lengths (the target was 300 movies; generation stopped at 237 when the Groq free-tier limit ran out):
+
+- An LLM (gpt-oss-safeguard-20b on Groq) wrote three queries per movie: keyword, descriptive, and vague. Code added a misspelled copy of each keyword query.
+- Code dropped 114 queries that contain a word from the title, since those are too easy. 834 queries over 233 movies remain.
+- Each query has exactly one correct movie. Split by movie id: dev 496 queries, test 452 (before title-leak removal).
+- These queries are generated, not real user searches. Bingo has no query logs yet. Descriptive queries were written from the plot text, so they favor word matching, which helps BM25.
+
+Results re-measured on 2026-10-03 after the hyphen tokenizer fix (`uv run python eval/known_item/run_known_item.py`). Before the fix, BM25 was dev 0.841 / test 0.858 hit@10, test MRR@10 0.701.
+
+| Configuration | dev hit@10 | test hit@10 | test hit@1 | test MRR@10 | p95 latency |
+|---|---|---|---|---|---|
+| BM25 | 0.863 | 0.863 | 0.618 | 0.698 | 33 ms |
+| Semantic | 0.573 | 0.626 | 0.371 | 0.448 | 1136 ms |
+| RRF | 0.811 | 0.837 | 0.571 | 0.656 | 681 ms |
+| RRF + cross-encoder | 0.894 | 0.916 | 0.697 | 0.771 | 856 ms |
+
+hit@10 by query style:
+
+| Configuration | keyword | misspelled keyword | descriptive | vague |
+|---|---|---|---|---|
+| BM25 | 0.948 | 0.761 | 0.955 | 0.798 |
+| Semantic | 0.667 | 0.464 | 0.714 | 0.557 |
+| RRF | 0.857 | 0.689 | 0.965 | 0.793 |
+| RRF + cross-encoder | 0.962 | 0.820 | 0.975 | 0.867 |
+
+What this says in plain words:
+
+- The cross-encoder rerank is the best mode: about 9 in 10 queries find the movie in the top 10.
+- Plain semantic search is the weakest. Fusing it with BM25 (RRF) is slightly worse than BM25 alone on this set.
+- Misspellings and vague memories are the hard cases. Reading 30 BM25 misses also showed hyphenated words failing: the tokenizer deleted hyphens, so "post-war" became "postwar". That is fixed (see `eval/known_item/AUDIT.md`).
+- Latency was measured on a shared, busy machine, so treat it as rough.
+
+CI rebuilds the BM25 index and fails if BM25 hit@10 or MRR@10 drops below `eval/known_item/baseline.json`. The full four-mode run is a manual workflow job because it needs the embedding model and takes a long time on CPU.
+
+### Monitoring path
+
+Log each search query with the mode, the top 10 ids, and whether the user clicked a result. Each week, sample about 50 queries with no click in the top 10, label the intended movie by hand when it can be found, and add them to the query set as real cases.
+
 ---
 
 ## Installation
@@ -54,7 +98,7 @@ git clone https://github.com/sivaratrisrinivas/Bingo
 cd Bingo
 
 # Install dependencies (uv recommended)
-uv sync
+uv sync --frozen
 
 # Or using pip
 pip install -e .

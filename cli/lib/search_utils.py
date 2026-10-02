@@ -1,5 +1,6 @@
 import json
 import os
+from functools import lru_cache
 from typing import Any
 
 DEFAULT_ALPHA = 0.5
@@ -35,9 +36,19 @@ def load_movies() -> list[dict]:
     return data["movies"]
 
 
+@lru_cache(maxsize=1)
+def _stopwords_cached(path: str) -> tuple[str, ...]:
+    with open(path, "r") as f:
+        return tuple(f.read().splitlines())
+
+
 def load_stopwords() -> list[str]:
-    with open(STOPWORDS_PATH, "r") as f:
-        return f.read().splitlines()
+    return list(_stopwords_cached(STOPWORDS_PATH))
+
+
+def load_stopword_set() -> frozenset[str]:
+    """Stopwords as a set, read once per process."""
+    return frozenset(_stopwords_cached(STOPWORDS_PATH))
 
 
 def format_search_result(
