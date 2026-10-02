@@ -34,7 +34,7 @@ Retrieval quality on `data/golden_dataset.json` (10 queries, 5000 movies, k=5). 
 
 Changes from the 2026-08-24 run (BM25 0.3800 / 0.5157 / 0.3607, p95 3419.2 ms): BM25 now scores from precomputed term statistics instead of re-reading every document per query, so p95 fell from about 3.4 s to 5 ms. The quality gain comes from a bug fix: the old code stemmed query terms twice inside `bm25()`, which changed the "zombie apocalypse" results. In an old-versus-new check on 15 queries, the other 14 returned identical rankings, and `tests/` checks the fast scorer against a brute-force BM25. Semantic and reranker latency is higher than in August because this run shared the machine with other jobs (load average about 19), so treat those latency numbers as noisy. Index build this run: 2022.3 s (BM25 5.0 s, chunk embeddings 2017.3 s on the loaded machine).
 
-With 10 queries, one query moves Precision@5 by 0.02 or more, so the golden table is a sanity check. The larger known-item eval below is the main quality measure.
+The 2026-10-03 hyphen tokenizer fix was not re-measured on this table. None of the 10 golden queries contains a hyphen, and a rerun after the fix gave identical per-query precision and recall for the configuration `eval/run_retrieval_metrics.py` stores. With 10 queries, one query moves Precision@5 by 0.02 or more, so the golden table is a sanity check. The larger known-item eval below is the main quality measure.
 
 The golden set lists `Død snø` as relevant for the zombie query. That title is not in `movies.json`, so no method can retrieve it.
 
@@ -57,29 +57,29 @@ A known-item query is what someone types when they remember a movie but not its 
 - Each query has exactly one correct movie. Split by movie id: dev 496 queries, test 452 (before title-leak removal).
 - These queries are generated, not real user searches. Bingo has no query logs yet. Descriptive queries were written from the plot text, so they favor word matching, which helps BM25.
 
-Results on 2026-10-02 (`uv run python eval/known_item/run_known_item.py`):
+Results re-measured on 2026-10-03 after the hyphen tokenizer fix (`uv run python eval/known_item/run_known_item.py`). Before the fix, BM25 was dev 0.841 / test 0.858 hit@10, test MRR@10 0.701.
 
 | Configuration | dev hit@10 | test hit@10 | test hit@1 | test MRR@10 | p95 latency |
 |---|---|---|---|---|---|
-| BM25 | 0.841 | 0.858 | 0.626 | 0.701 | 39 ms |
-| Semantic | 0.573 | 0.626 | 0.371 | 0.448 | 371 ms |
-| RRF | 0.804 | 0.837 | 0.560 | 0.650 | 775 ms |
-| RRF + cross-encoder | 0.888 | 0.916 | 0.697 | 0.772 | 928 ms |
+| BM25 | 0.863 | 0.863 | 0.618 | 0.698 | 33 ms |
+| Semantic | 0.573 | 0.626 | 0.371 | 0.448 | 1136 ms |
+| RRF | 0.811 | 0.837 | 0.571 | 0.656 | 681 ms |
+| RRF + cross-encoder | 0.894 | 0.916 | 0.697 | 0.771 | 856 ms |
 
 hit@10 by query style:
 
 | Configuration | keyword | misspelled keyword | descriptive | vague |
 |---|---|---|---|---|
-| BM25 | 0.924 | 0.743 | 0.955 | 0.783 |
+| BM25 | 0.948 | 0.761 | 0.955 | 0.798 |
 | Semantic | 0.667 | 0.464 | 0.714 | 0.557 |
-| RRF | 0.852 | 0.689 | 0.960 | 0.788 |
-| RRF + cross-encoder | 0.957 | 0.811 | 0.975 | 0.867 |
+| RRF | 0.857 | 0.689 | 0.965 | 0.793 |
+| RRF + cross-encoder | 0.962 | 0.820 | 0.975 | 0.867 |
 
 What this says in plain words:
 
 - The cross-encoder rerank is the best mode: about 9 in 10 queries find the movie in the top 10.
 - Plain semantic search is the weakest. Fusing it with BM25 (RRF) is slightly worse than BM25 alone on this set.
-- Misspellings and vague memories are the hard cases. In BM25 misses we also saw hyphenated words and non-English titles.
+- Misspellings and vague memories are the hard cases. Reading 30 BM25 misses also showed hyphenated words failing: the tokenizer deleted hyphens, so "post-war" became "postwar". That is fixed (see `eval/known_item/AUDIT.md`).
 - Latency was measured on a shared, busy machine, so treat it as rough.
 
 CI rebuilds the BM25 index and fails if BM25 hit@10 or MRR@10 drops below `eval/known_item/baseline.json`. The full four-mode run is a manual workflow job because it needs the embedding model and takes a long time on CPU.
