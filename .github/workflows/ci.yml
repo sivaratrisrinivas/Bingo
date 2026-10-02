@@ -23,13 +23,13 @@ jobs:
         run: uv sync --frozen
       - name: Lint new code
         run: uv run ruff check tests eval/known_item
-      - name: Unit tests
-        run: uv run pytest -q
       - name: Fetch corpus and fixtures
         run: |
           mkdir -p data
           cp eval/fixtures/stopwords.txt eval/fixtures/golden_dataset.json data/
           curl -fsSL -o data/movies.json https://storage.googleapis.com/qvault-webapp-dynamic-assets/course_assets/movies.json
+      - name: Unit tests
+        run: uv run pytest -q
       - name: Known-item regression gate (BM25)
         run: uv run python eval/known_item/run_known_item.py --configs bm25 --check
       - name: Full known-item eval (manual)
