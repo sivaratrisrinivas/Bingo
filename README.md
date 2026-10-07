@@ -15,6 +15,64 @@ Together, these methods can be combined for even better results.
 
 ---
 
+## Architecture
+
+High-level view of how a query moves through Bingo.
+
+```mermaid
+flowchart LR
+    subgraph Data
+        M[data/movies.json]
+        S[data/stopwords.txt]
+    end
+
+    subgraph Indexing
+        BI[BM25 inverted index]
+        EM[Chunk embeddings<br/>all-MiniLM-L6-v2]
+    end
+
+    subgraph Retrieval
+        BM[BM25 search]
+        SEM[Semantic search]
+        RRF[Hybrid fusion<br/>RRF / weighted]
+    end
+
+    subgraph Refinement
+        QE[Query enhancement<br/>spell / rewrite / expand]
+        RR[Reranking<br/>cross-encoder / LLM]
+        RAG[RAG answers<br/>Gemini]
+    end
+
+    subgraph Interfaces
+        CLI[cli/*.py]
+        WEB[web/server.py<br/>side-by-side demo]
+        EVAL[eval/<br/>golden + known-item]
+    end
+
+    M --> BI
+    S --> BI
+    M --> EM
+    BI --> BM
+    EM --> SEM
+    BM --> RRF
+    SEM --> RRF
+    QE --> BM
+    QE --> SEM
+    RRF --> RR
+    RR --> RAG
+    RRF --> CLI
+    RR --> CLI
+    RAG --> CLI
+    BM --> WEB
+    SEM --> WEB
+    RRF --> WEB
+    RR --> WEB
+    RRF --> EVAL
+    BM --> EVAL
+```
+
+---
+
 ## Why Two Approaches?
 
 **Traditional keyword search** only finds exact word matches. **BM25** is smarter—it considers how often words appear, how rare they are, and adjusts for document length. **Semantic search** goes further by understanding meaning and context, finding movies that are similar in concept even if they don't share keywords.
